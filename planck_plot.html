@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Curva de radiación del cuerpo negro — Ley de Planck</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <link rel="stylesheet" href="simulador.css">
+</head>
+<body>
+  <h2>Radiación espectral de un cuerpo negro (Ley de Planck)</h2>
+  <div id="controls">
+    <label for="slider">Temperatura: </label>
+    <input id="slider" type="range" min="200" max="12000" step="1" value="3000" />
+    <input id="Tinput" type="number" min="200" max="12000" step="1" value="3000" style="width:100px; margin-left:6px;" aria-label="Temperatura (K)" />
+    <div id="info">
+      <strong><span id="Tval">3000</span> K</strong>
+      &nbsp;•&nbsp; Pico ≈ <span id="lambdaPeak">—</span> µm
+    </div>
+    <button id="play">▶︎ Reproducir</button>
+  </div>
+
+  <div id="rangeControls">
+    <button id="decreaseY">−</button>
+    <span id="yRangeLabel">Rango Y: [0, 1e12]</span>
+    <button id="increaseY">+</button>
+  </div>
+
+  <div id="plot" style="width:100%;max-width:1000px;height:620px"></div>
+
+  <script src="./simulador.js"></script>
+</body>
+</html>

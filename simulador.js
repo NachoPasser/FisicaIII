@@ -1,0 +1,320 @@
+// simulador.js
+// Gráfico interactivo de la ley de Planck usando Plotly.js
+(function(){
+	const h = 6.62607015e-34;
+	const c = 299792458;
+	const k = 1.380649e-23;
+
+	// Wavelength grid (micrometers) — logspaced to cover desde UV hasta radio
+	const N = 3000;
+	const lamMin_um = 0.01;
+	const lamMax_um = 300;
+	const logMin = Math.log10(lamMin_um);
+	const logMax = Math.log10(lamMax_um);
+	const lambda_um = new Array(N);
+	const lambda_m = new Array(N);
+	for(let i=0;i<N;i++){
+		const v = logMin + (i/(N-1))*(logMax-logMin);
+		lambda_um[i] = Math.pow(10, v);
+		lambda_m[i] = lambda_um[i] * 1e-6;
+	}
+
+	function planck_lambda(lambda, T){
+		// lambda in meters, returns spectral radiance B_lambda in W·sr^-1·m^-3
+		const a = 2 * h * c * c;
+		const b = (h * c) / (lambda * k * T);
+		if (b > 700) return 0; // avoid overflow in exp
+		const denom = Math.expm1(b); // exp(b)-1, better numerical
+		if (denom <= 0) return 0;
+		return a / Math.pow(lambda,5) / denom;
+	}
+
+	function spectrumForTemperature(T){
+		const y = new Array(N);
+		for(let i=0;i<N;i++){
+			y[i] = planck_lambda(lambda_m[i], T);
+		}
+		return y;
+	}
+
+	// Color gradient based on blackbody temperature
+	// Interpolates smoothly through the typical blackbody color sequence
+	const colorKeypoints = [
+        {T: 800, color: '#1A0000'},   // muy oscuro rojo (infrarrojo)
+        {T: 900, color: '#300000'},   // rojo intenso
+		{T: 1000, color: '#3d1a1a'},   // muy oscuro rojo (infrarrojo)
+		{T: 1500, color: '#cc3333'},   // rojo intenso
+		{T: 2000, color: '#ff5533'},   // rojo brillante
+		{T: 2500, color: '#ff8833'},   // naranja
+		{T: 3000, color: '#ffcc44'},   // amarillo cálido (tungsteno)
+		{T: 4000, color: '#ffdd99'},   // amarillo pálido
+		{T: 5000, color: '#ffffbb'},   // blanco cálido con tinte amarillento
+		{T: 5800, color: '#ffffff'},   // blanco neutro (Sol)
+		{T: 6500, color: '#ffffff'},   // blanco puro (D65)
+		{T: 8000, color: '#ccddff'},   // blanco azulado
+		{T: 9000, color: '#aaccff'},   // azul claro
+		{T: 10000, color: '#7799ff'},  // azul evidente
+		{T: 12000, color: '#3355ff'}   // azul intenso
+	];
+
+	function hexToRgb(hex){
+		const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+		return result ? [parseInt(result[1],16), parseInt(result[2],16), parseInt(result[3],16)] : [255,255,255];
+	}
+
+	function rgbToHex(r, g, b){
+		return '#' + [r, g, b].map(x => {
+			const hex = Math.round(Math.max(0, Math.min(255, x))).toString(16);
+			return hex.length === 1 ? '0' + hex : hex;
+		}).join('');
+	}
+
+	function interpolateColor(T){
+		// Find the two keypoints that bracket T
+		let idx = 0;
+		for(let i=0; i<colorKeypoints.length-1; i++){
+			if(T >= colorKeypoints[i].T && T <= colorKeypoints[i+1].T){
+				idx = i;
+				break;
+			}
+		}
+		// Clamp to edges if T is outside range
+		if(T < colorKeypoints[0].T) idx = 0;
+		if(T > colorKeypoints[colorKeypoints.length-1].T) idx = colorKeypoints.length-2;
+
+		const kp1 = colorKeypoints[idx];
+		const kp2 = colorKeypoints[idx+1];
+
+		// Linear interpolation factor
+		const alpha = (T - kp1.T) / (kp2.T - kp1.T);
+
+		const [r1, g1, b1] = hexToRgb(kp1.color);
+		const [r2, g2, b2] = hexToRgb(kp2.color);
+
+		const r = r1 + alpha * (r2 - r1);
+		const g = g1 + alpha * (g2 - g1);
+		const b = b1 + alpha * (b2 - b1);
+
+		return rgbToHex(r, g, b);
+	}
+
+	// Initial temperature
+	let T = 3000;
+
+	const y0 = spectrumForTemperature(T);
+	const color0 = interpolateColor(T);
+
+    function makeMainTrace(y, color){
+        return {
+            x: lambda_um,
+            y: y,
+            mode: 'lines',
+            name: 'Curva de radiación espectral',   
+            showlegend: true,
+            line: {color: color, width: 2},
+        }
+    }
+
+	function makePeakTrace(lambdaPeak_um, ymax){
+		return {
+			x: [lambdaPeak_um, lambdaPeak_um],
+			y: [0, ymax],
+			mode: 'lines+markers',
+			name: 'Longitud de onda del pico',
+            showlegend: true,
+			line: {color: '#d62728', width: 1, dash: 'dash'},
+            marker: {
+            size: 10,       // hace fácil el hover
+            color: '#d62728',
+            opacity: 1
+        },
+		};
+	}
+
+	const maxY0 = Math.max.apply(null, y0);
+	const lambdaPeak0_um = 2.897771955e-3 / T * 1e6; // Wien's displacement (m) -> µm
+	const traceMain = makeMainTrace(y0, color0);
+    const tracePeak = makePeakTrace(lambdaPeak0_um, maxY0);
+
+	const layout = {
+		xaxis: {title: { text: 'Longitud de onda λ (µm)', standoff: 15}, type: 'log', autorange:true,},
+		yaxis: {title: { text: 'Radiancia espectral I(λ,T) (W·sr⁻¹·m⁻³)', standoff: 15}, autorange:false, exponentformat: 'e', showexponent: 'all', range: [0, 1e12]},
+		title: `Ley de Planck — Temperatura: ${T} K`,
+		legend: {orientation: 'h'},
+		margin: {t:60, r:100},
+        paper_bgcolor: 'black',
+        font: {color: 'white'},
+        plot_bgcolor: '#111111',
+        hovermode: 'closest'
+	};
+
+	Plotly.newPlot('plot', [traceMain, tracePeak], layout, {responsive:true, displayModeBar: false});
+
+	// DOM elements
+	const slider = document.getElementById('slider');
+	const Tinput = document.getElementById('Tinput');
+	const Tval = document.getElementById('Tval');
+	const lambdaPeakLabel = document.getElementById('lambdaPeak');
+	const playBtn = document.getElementById('play');
+
+	function updateDisplay(T){
+		Tval.textContent = Math.round(T);
+		if(typeof Tinput !== 'undefined' && Tinput) Tinput.value = Math.round(T);
+		const lam_peak_um = 2.897771955e-3 / T * 1e6;
+		lambdaPeakLabel.textContent = lam_peak_um.toFixed(3);
+	}
+
+	function updatePlot(Tnew){
+		const ynew = spectrumForTemperature(Tnew);
+		const ymax = Math.max.apply(null, ynew);
+		const lam_peak_um = 2.897771955e-3 / Tnew * 1e6;
+		const colorNew = interpolateColor(Tnew);
+        
+        
+		// Use Plotly.react for a smooth transition
+		const newTraces = [
+            makeMainTrace(ynew, colorNew),
+            makePeakTrace(lam_peak_um, ymax)
+		];
+
+		const newLayout = Object.assign({}, layout, {title: `Ley de Planck — Temperatura: ${Math.round(Tnew)} K`});
+
+		Plotly.react('plot', newTraces, newLayout, {transition:{duration:240, easing:'cubic-in-out'}, displayModeBar: false});
+		updateDisplay(Tnew);
+    }
+
+	slider.addEventListener('input', (e)=>{
+		T = +e.target.value;
+		// sync numeric input
+		if(typeof Tinput !== 'undefined' && Tinput) Tinput.value = Math.round(T);
+		// update smoothly
+		updatePlot(T);
+	});
+
+	// Allow numeric keyboard input for temperature, with clamping 200..12000
+	if(typeof Tinput !== 'undefined' && Tinput){
+		Tinput.addEventListener('input', (e)=>{
+			const raw = e.target.value;
+			if(raw === '') return;
+			let v = Number(raw);
+			if(Number.isNaN(v)) return;
+			v = Math.round(v);
+			// clamp to allowed range
+			v = Math.max(200, Math.min(12000, v));
+			e.target.value = v;
+			slider.value = v;
+			T = v;
+			updatePlot(T);
+		});
+
+		Tinput.addEventListener('change', (e)=>{
+			let v = Number(e.target.value);
+			if(Number.isNaN(v)) v = 200;
+			v = Math.round(Math.max(200, Math.min(12000, v)));
+			e.target.value = v;
+			slider.value = v;
+			T = v;
+			updatePlot(T);
+		});
+	}
+
+	// Play button: animates temperature from current to max and back
+	let playing = false;
+	let playAnim;
+	playBtn.addEventListener('click', ()=>{
+		if(playing){
+			playing = false;
+			playBtn.textContent = '▶︎ Reproducir';
+			cancelAnimationFrame(playAnim);
+			return;
+		}
+		playing = true;
+		playBtn.textContent = '■ Parar';
+
+		const minT = +slider.min;
+		const maxT = +slider.max;
+		const duration = 8000; // ms for full sweep
+		const start = performance.now();
+
+		function step(now){
+			const t = ((now - start) % duration) / duration; // 0..1
+			// ease in-out
+			const ease = 0.5 - 0.5*Math.cos(Math.PI*2*t);
+			const Ttarget = minT + ease*(maxT - minT);
+			slider.value = Math.round(Ttarget);
+			T = Math.round(Ttarget);
+			updatePlot(T);
+			playAnim = requestAnimationFrame(step);
+		}
+		playAnim = requestAnimationFrame(step);
+	});
+
+	// Initialize display
+	updateDisplay(T);
+
+	// Y-axis range cycling with +/- buttons
+	const yRanges = [
+		{max: 7e8, label: 'Rango Y: [0, 7e8]'},
+        {max: 1e10, label: 'Rango Y: [0, 1e10]'},
+        {max: 1e11, label: 'Rango Y: [0, 1e11]'},
+		{max: 1e12, label: 'Rango Y: [0, 1e12]'},
+        {max: 1e13, label: 'Rango Y: [0, 1e13]'},
+        {max: 1e14, label: 'Rango Y: [0, 1e14]'},
+		{max: 1.03e15, label: 'Rango Y: [0, 1.03e15]'}
+	];
+	let currentYRangeIdx = 3; // start at 1e12
+
+	const decreaseYBtn = document.getElementById('decreaseY');
+	const increaseYBtn = document.getElementById('increaseY');
+	const yRangeLabel = document.getElementById('yRangeLabel');
+
+	function applyYRange(idx){
+		currentYRangeIdx = idx;
+
+        if(idx == 0){
+            decreaseYBtn.disabled = true;
+            decreaseYBtn.style.backgroundColor = 'gray';
+            decreaseYBtn.style.pointerEvents = 'none';
+        } else{
+            decreaseYBtn.disabled = false;
+            decreaseYBtn.style.backgroundColor = '#333';
+            decreaseYBtn.style.pointerEvents = 'all';
+        }
+
+        if(idx == yRanges.length - 1){
+            increaseYBtn.disabled = true;
+            increaseYBtn.style.backgroundColor = 'gray';
+            increaseYBtn.style.pointerEvents = 'none';
+        } else{
+            increaseYBtn.disabled = false;
+            increaseYBtn.style.backgroundColor = '#333';
+            increaseYBtn.style.pointerEvents = 'all';
+        }
+
+		const range = yRanges[idx];
+		Plotly.relayout('plot', {
+			'yaxis.range': [0, range.max],
+			'yaxis.autorange': false,
+            'xaxis.autorange': true
+		});
+		yRangeLabel.textContent = range.label;
+	}
+
+	if(decreaseYBtn){
+		decreaseYBtn.addEventListener('click', ()=>{
+            if(currentYRangeIdx != 0){
+                applyYRange(currentYRangeIdx - 1);
+            }
+		});
+	}
+
+	if(increaseYBtn){
+		increaseYBtn.addEventListener('click', ()=>{
+            if(currentYRangeIdx != yRanges.length){
+                applyYRange(currentYRangeIdx + 1);
+            } 
+		});
+	}
+
+})();
+
