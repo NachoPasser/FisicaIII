@@ -37,31 +37,6 @@
 		return y;
 	}
 
-	// Color gradient based on blackbody temperature
-	// Interpolates smoothly through the typical blackbody color sequence
-	const colorKeypoints = [
-        {T: 800, color: '#1A0000'},   // muy oscuro rojo (infrarrojo)
-        {T: 900, color: '#300000'},   // rojo intenso
-		{T: 1000, color: '#3d1a1a'},   // muy oscuro rojo (infrarrojo)
-		{T: 1500, color: '#cc3333'},   // rojo intenso
-		{T: 2000, color: '#ff5533'},   // rojo brillante
-		{T: 2500, color: '#ff8833'},   // naranja
-		{T: 3000, color: '#ffcc44'},   // amarillo cálido (tungsteno)
-		{T: 4000, color: '#ffdd99'},   // amarillo pálido
-		{T: 5000, color: '#ffffbb'},   // blanco cálido con tinte amarillento
-		{T: 5800, color: '#ffffff'},   // blanco neutro (Sol)
-		{T: 6500, color: '#ffffff'},   // blanco puro (D65)
-		{T: 8000, color: '#ccddff'},   // blanco azulado
-		{T: 9000, color: '#aaccff'},   // azul claro
-		{T: 10000, color: '#7799ff'},  // azul evidente
-		{T: 12000, color: '#3355ff'}   // azul intenso
-	];
-
-	function hexToRgb(hex){
-		const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-		return result ? [parseInt(result[1],16), parseInt(result[2],16), parseInt(result[3],16)] : [255,255,255];
-	}
-
 	function rgbToHex(r, g, b){
 		return '#' + [r, g, b].map(x => {
 			const hex = Math.round(Math.max(0, Math.min(255, x))).toString(16);
@@ -69,40 +44,9 @@
 		}).join('');
 	}
 
-	function interpolateColor(T){
-		// Find the two keypoints that bracket T
-		let idx = 0;
-		for(let i=0; i<colorKeypoints.length-1; i++){
-			if(T >= colorKeypoints[i].T && T <= colorKeypoints[i+1].T){
-				idx = i;
-				break;
-			}
-		}
-		// Clamp to edges if T is outside range
-		if(T < colorKeypoints[0].T) idx = 0;
-		if(T > colorKeypoints[colorKeypoints.length-1].T) idx = colorKeypoints.length-2;
-
-		const kp1 = colorKeypoints[idx];
-		const kp2 = colorKeypoints[idx+1];
-
-		// Linear interpolation factor
-		const alpha = (T - kp1.T) / (kp2.T - kp1.T);
-
-		const [r1, g1, b1] = hexToRgb(kp1.color);
-		const [r2, g2, b2] = hexToRgb(kp2.color);
-
-		const r = r1 + alpha * (r2 - r1);
-		const g = g1 + alpha * (g2 - g1);
-		const b = b1 + alpha * (b2 - b1);
-
-		return rgbToHex(r, g, b);
-	}
 
 	// Initial temperature
-	let T = 3000;
-
-	const y0 = spectrumForTemperature(T);
-	const color0 = interpolateColor(T);
+	let T = 5850;
 
     function makeMainTrace(y, color){
         return {
@@ -131,11 +75,6 @@
 		};
 	}
 
-	const maxY0 = Math.max.apply(null, y0);
-	const lambdaPeak0_um = 2.897771955e-3 / T * 1e6; // Wien's displacement (m) -> µm
-	const traceMain = makeMainTrace(y0, color0);
-    const tracePeak = makePeakTrace(lambdaPeak0_um, maxY0);
-
 	const layout = {
 		xaxis: {title: { text: 'Longitud de onda λ (µm)', standoff: 15}, type: 'log', autorange:true,},
 		yaxis: {title: { text: 'Radiancia espectral I(λ,T) (W·sr⁻¹·m⁻³)', standoff: 15}, autorange:false, exponentformat: 'e', showexponent: 'all', range: [0, 1e12]},
@@ -147,8 +86,6 @@
         plot_bgcolor: '#111111',
         hovermode: 'closest'
 	};
-
-	Plotly.newPlot('plot', [traceMain, tracePeak], layout, {responsive:true, displayModeBar: false});
 
 	// DOM elements
 	const slider = document.getElementById('slider');
@@ -168,19 +105,114 @@
 		const ynew = spectrumForTemperature(Tnew);
 		const ymax = Math.max.apply(null, ynew);
 		const lam_peak_um = 2.897771955e-3 / Tnew * 1e6;
-		const colorNew = interpolateColor(Tnew);
-        
-        
+		const lam_peak_nm = lam_peak_um * 1000;
+
+		// Integrate total and visible-band radiance (trapezoidal)
+		let total = 0, visible = 0;
+		for(let i=0;i<N-1;i++){
+			const dx = (lambda_m[i+1] - lambda_m[i]);
+			const avg = 0.5*(ynew[i] + ynew[i+1]);
+			total += avg * dx;
+			const lam_um_center = 0.5*(lambda_um[i] + lambda_um[i+1]);
+			if(lam_um_center >= 0.4 && lam_um_center <= 0.75){
+				visible += avg * dx;
+			}
+		}
+		const fracVisible = total > 0 ? visible / total : 0;
+
+		// Helper: wavelength (nm) -> rgb approximation
+		function wavelengthToRgb(w) {
+			// w en nm
+			let r = 0, g = 0, b = 0;
+
+			// fuera del visible → negro
+			if (w < 400 || w > 750) {
+				return [0, 0, 0];
+			}
+
+			// espectro visible aproximado
+			if (w < 450) {                 // violeta
+				r = (450 - w) / (450 - 400);
+				b = 1;
+			}
+			else if (w < 495) {            // azul
+				g = (w - 450) / (495 - 450);
+				b = 1;
+			}
+			else if (w < 570) {            // verde
+				g = 1;
+				b = (570 - w) / (570 - 495);
+			}
+			else if (w < 590) {            // amarillo
+				r = (w - 570) / (590 - 570);
+				g = 1;
+			}
+			else if (w < 620) {            // naranja
+				r = 1;
+				g = (620 - w) / (620 - 590);
+			}
+			else  if (w <= 700) {                // rojo visible
+				r = 1;
+			}
+
+			else {                              // 700–750 nm: rojo tenue
+			r = (750 - w) / (750 - 700);    // 700→1, 750→0
+			}	
+
+			// corrección gamma (opcional pero ok)
+			const gamma = 0.8;
+			function adjust(c) {
+				return Math.round(255 * Math.pow(c, gamma));
+			}
+
+			return [adjust(r), adjust(g), adjust(b)];
+		}
+
+
+		function rgbToRgbaString(rgb, a){ return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`; }
+
+		// Decide curve color: if most energy in visible -> white; else if peak in visible -> wavelength color; else black
+		let curveColorHex = '#000000';
+		if(fracVisible > 0.6){
+			curveColorHex = '#ffffff';
+		} else if(lam_peak_nm >= 400 && lam_peak_nm <= 750){
+			const rgb = wavelengthToRgb(lam_peak_nm);
+			curveColorHex = rgbToHex(rgb[0], rgb[1], rgb[2]);
+		} else {
+			curveColorHex = '#000000';
+		}
+
+		// Build visible-band colored shapes (segments) from 400-750 nm
+		const visShapes = [];
+		const visStart = 0.4; const visEnd = 0.75; // µm
+		const segCount = 40;
+		for(let i=0;i<segCount;i++){
+			const a = visStart + (i/segCount)*(visEnd-visStart);
+			const b = visStart + ((i+1)/segCount)*(visEnd-visStart);
+			const center_nm = (a+b)/2*1000;
+			const rgb = wavelengthToRgb(center_nm);
+			visShapes.push({
+				type: 'rect', xref: 'x', yref: 'paper', x0: a, x1: b, y0: 0, y1: 1,
+				fillcolor: rgbToRgbaString(rgb, 0.14), line: {width: 0}
+			});
+		}
+
 		// Use Plotly.react for a smooth transition
-		const newTraces = [
-            makeMainTrace(ynew, colorNew),
-            makePeakTrace(lam_peak_um, ymax)
+		let newTraces = [
+			makeMainTrace(ynew, curveColorHex),
+			makePeakTrace(lam_peak_um, ymax)
 		];
 
-		const newLayout = Object.assign({}, layout, {title: `Ley de Planck — Temperatura: ${Math.round(Tnew)} K`});
+		let newLayout = Object.assign({}, layout, {
+			title: `Ley de Planck — Temperatura: ${Math.round(Tnew)} K`,
+			shapes: visShapes
+		});
 
 		Plotly.react('plot', newTraces, newLayout, {transition:{duration:240, easing:'cubic-in-out'}, displayModeBar: false});
 		updateDisplay(Tnew);
+        
+        
+
     }
 
 	slider.addEventListener('input', (e)=>{
@@ -231,8 +263,8 @@
 		playing = true;
 		playBtn.textContent = '■ Parar';
 
-		const minT = +slider.min;
-		const maxT = +slider.max;
+		const minT = +3865;
+		const maxT = +7600;
 		const duration = 8000; // ms for full sweep
 		const start = performance.now();
 
@@ -249,8 +281,10 @@
 		playAnim = requestAnimationFrame(step);
 	});
 
-	// Initialize display
-	updateDisplay(T);
+	// Initialize display (render using new plotting logic)
+	updatePlot(T);
+
+	// (Y-range buttons will be initialized after their definitions)
 
 	// Y-axis range cycling with +/- buttons
 	const yRanges = [
@@ -262,7 +296,7 @@
         {max: 1e14, label: 'Rango Y: [0, 1e14]'},
 		{max: 1.03e15, label: 'Rango Y: [0, 1.03e15]'}
 	];
-	let currentYRangeIdx = 3; // start at 1e12
+	let currentYRangeIdx = 5; // start at 1e14
 
 	const decreaseYBtn = document.getElementById('decreaseY');
 	const increaseYBtn = document.getElementById('increaseY');
@@ -315,6 +349,9 @@
             } 
 		});
 	}
+
+	// initialize Y-range label/buttons to current index
+	applyYRange(currentYRangeIdx);
 
 })();
 
